@@ -1,16 +1,64 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import timedelta, date
+from sqlalchemy import inspect, text
+from datetime import timedelta, date, datetime, timezone
 import urllib.request
 import urllib.error
 import json
+import random
+import secrets
 
 import models, schemas, auth
+import plan_generator
 from database import get_db, engine
+
+def run_migrations():
+    inspector = inspect(engine)
+    if 'users' not in inspector.get_table_names():
+        return
+    columns = [col['name'] for col in inspector.get_columns('users')]
+    
+    with engine.begin() as connection:
+        if 'otp_code' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN otp_code VARCHAR(10) NULL"))
+        if 'otp_expires_at' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN otp_expires_at TIMESTAMP NULL"))
+        if 'reset_token' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN reset_token VARCHAR(100) NULL"))
+        if 'reset_token_expires_at' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN reset_token_expires_at TIMESTAMP NULL"))
+        if 'has_completed_prep' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN has_completed_prep BOOLEAN NOT NULL DEFAULT FALSE"))
+        if 'highest_qualification_specialization' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN highest_qualification_specialization VARCHAR(150) NULL"))
+        if 'highest_qualification_year' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN highest_qualification_year INTEGER NULL"))
+        if 'current_profession_role' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN current_profession_role VARCHAR(100) NULL"))
+        if 'current_profession_tech' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN current_profession_tech VARCHAR(100) NULL"))
+        if 'platform_usage_goal' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN platform_usage_goal VARCHAR(100) NULL"))
+        if 'technology_to_learn' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN technology_to_learn VARCHAR(100) NULL"))
+        if 'proficiency_level' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN proficiency_level VARCHAR(100) NULL"))
+        if 'known_technical_skills' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN known_technical_skills VARCHAR(255) NULL"))
+        if 'learning_duration_type' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN learning_duration_type VARCHAR(50) NULL"))
+        if 'learning_duration' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN learning_duration VARCHAR(50) NULL"))
+        if 'learning_plan' not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN learning_plan TEXT NULL"))
 
 # Create tables (fallback, though init_db.py will do this too)
 models.Base.metadata.create_all(bind=engine)
+try:
+    run_migrations()
+except Exception as e:
+    print(f"Migration error: {e}")
 
 app = FastAPI(title="NextStep AI API", version="1.0.0")
 
@@ -42,7 +90,8 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
         email=user_in.email,
         mobile=user_in.mobile,
         password=hashed_password,
-        date_of_birth=user_in.date_of_birth
+        date_of_birth=user_in.date_of_birth,
+        has_completed_prep=False
     )
     
     # Add to database
@@ -50,6 +99,7 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
     return db_user
+
 
 @app.post("/login", response_model=schemas.Token)
 def login(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
@@ -136,13 +186,22 @@ def login_google(login_in: schemas.GoogleLoginRequest, db: Session = Depends(get
 
 @app.get("/api/dashboard")
 def get_dashboard_data(current_user: models.User = Depends(auth.get_current_user)):
+    learning_plan_list = []
+    if current_user.learning_plan:
+        try:
+            learning_plan_list = json.loads(current_user.learning_plan)
+        except Exception:
+            pass
+
     # Return custom dashboard data personalized for the authenticated user
     return {
         "user": {
             "name": current_user.name,
             "email": current_user.email,
             "mobile": current_user.mobile,
-            "date_of_birth": current_user.date_of_birth.strftime("%Y-%m-%d")
+            "date_of_birth": current_user.date_of_birth.strftime("%Y-%m-%d"),
+            "has_completed_prep": current_user.has_completed_prep,
+            "learning_plan": learning_plan_list
         },
         "projectMonitor": {
             "suggested": [
@@ -220,3 +279,91 @@ def get_dashboard_data(current_user: models.User = Depends(auth.get_current_user
             ]
         }
     }
+
+@app.post("/forgot-password")
+def forgot_password(req: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="An account with this email address does not exist."
+        )
+    # Generate secure verification token
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    db.commit()
+    
+    # Generate verification link
+    reset_link = f"http://localhost:5173/?token={token}"
+    return {
+        "message": "Verification link generated successfully.",
+        "link": reset_link,
+        "token": token
+    }
+
+@app.post("/reset-password")
+def reset_password(req: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.reset_token == req.token).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token."
+        )
+    
+    expiry = user.reset_token_expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+        
+    if expiry < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token has expired."
+        )
+        
+    # Update password securely
+    hashed_password = auth.get_password_hash(req.new_password)
+    user.password = hashed_password
+    user.reset_token = None
+    user.reset_token_expires_at = None
+    db.commit()
+    return {"message": "Password updated successfully."}
+
+@app.get("/api/users/me", response_model=schemas.UserOut)
+def get_current_user_profile(current_user: models.User = Depends(auth.get_current_user)):
+    return current_user
+
+@app.post("/api/preparation/submit")
+def submit_preparation(
+    req: schemas.PreparationFormSubmit,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    current_user.highest_qualification_specialization = req.highest_qualification_specialization
+    current_user.highest_qualification_year = req.highest_qualification_year
+    current_user.current_profession_role = req.current_profession_role
+    current_user.current_profession_tech = req.current_profession_tech
+    current_user.platform_usage_goal = req.platform_usage_goal
+    current_user.technology_to_learn = req.technology_to_learn
+    current_user.proficiency_level = req.proficiency_level
+    current_user.known_technical_skills = ", ".join(req.known_technical_skills)
+    current_user.learning_duration_type = req.learning_duration_type
+    current_user.learning_duration = req.learning_duration
+    
+    # Generate customized plan
+    plan = plan_generator.generate_custom_plan(
+        tech_to_learn=req.technology_to_learn,
+        proficiency=req.proficiency_level,
+        goal=req.platform_usage_goal,
+        duration_type=req.learning_duration_type,
+        duration=req.learning_duration
+    )
+    
+    current_user.learning_plan = json.dumps(plan)
+    current_user.has_completed_prep = True
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return {"message": "Preparation form submitted successfully.", "learning_plan": plan}
+

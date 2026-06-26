@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertTriangle, KeyRound, ArrowLeft } from 'lucide-react';
 
-export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }) {
+export default function Login({ onLoginSuccess, onNavigateToRegister, addToast, initialResetToken, clearResetToken }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -10,6 +10,24 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
 
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
+
+  // Forgot password stages: null (login), 'email', 'link-sent', 'reset'
+  const [forgotStage, setForgotStage] = useState(null);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [forgotError, setForgotError] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [resetVerificationToken, setResetVerificationToken] = useState('');
+  const [simulatedLink, setSimulatedLink] = useState('');
+
+  React.useEffect(() => {
+    if (initialResetToken) {
+      setResetVerificationToken(initialResetToken);
+      setForgotStage('reset');
+    }
+  }, [initialResetToken]);
 
   const validate = () => {
     const tempErrors = {};
@@ -58,6 +76,110 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
     }
   };
 
+  const handleSendOtp = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+    if (!forgotEmail) {
+      addToast('Email is required', 'error');
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(forgotEmail)) {
+      addToast('Invalid email address format', 'error');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const response = await fetch('http://localhost:8000/forgot-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: forgotEmail }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send verification link.');
+      }
+
+      addToast('Verification link generated successfully!', 'success');
+      setSimulatedLink(data.link);
+      setForgotStage('link-sent');
+    } catch (err) {
+      setForgotError(err.message);
+      addToast(err.message, 'error');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+
+    if (!newPassword || !confirmNewPassword) {
+      addToast('All fields are required', 'error');
+      return;
+    }
+
+    if (!resetVerificationToken) {
+      addToast('Missing or invalid reset token. Please request a new verification link.', 'error');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      addToast('Passwords do not match', 'error');
+      return;
+    }
+
+    // Password validation logic
+    const hasUppercase = /[A-Z]/.test(newPassword);
+    const hasLowercase = /[a-z]/.test(newPassword);
+    const hasDigit = /\d/.test(newPassword);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
+    if (newPassword.length < 8 || !hasUppercase || !hasLowercase || !hasDigit || !hasSpecial) {
+      addToast('Password must be at least 8 characters and include uppercase, lowercase, digit, and special character', 'error');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const response = await fetch('http://localhost:8000/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: resetVerificationToken,
+          new_password: newPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to reset password.');
+      }
+
+      addToast('Password updated successfully! Please log in.', 'success');
+      setForgotStage(null);
+      setPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setResetVerificationToken('');
+      if (clearResetToken) {
+        clearResetToken();
+      }
+    } catch (err) {
+      setForgotError(err.message);
+      addToast(err.message, 'error');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   const handleGoogleLogin = () => {
     const clientId = "898646512594-5bhsj3v9bafs1ive9iqdbsprvafrlba9.apps.googleusercontent.com";
 
@@ -77,6 +199,229 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
     }, 1000);
   };
 
+  // ----------------------------------------------------
+  // RENDER: Forgot Password - Enter Email Stage
+  // ----------------------------------------------------
+  if (forgotStage === 'email') {
+    return (
+      <div className="w-full max-w-md p-8 rounded-2xl glass-panel glow-cyan transition-all duration-300">
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-16 h-16 mb-3 rounded-2xl flex items-center justify-center bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5">
+            <div className="w-full h-full bg-darkBg rounded-[14px] flex items-center justify-center">
+              <KeyRound className="w-8 h-8 text-cyan-400" />
+            </div>
+          </div>
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">Reset Password</h2>
+          <p className="text-gray-400 text-sm mt-1 text-center">Enter your registered email to receive a password reset link</p>
+        </div>
+
+        {forgotError && (
+          <div className="mb-5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2 animate-pulse">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <span>{forgotError}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSendOtp} className="space-y-5">
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">Registered Email</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <Mail className="w-5 h-5" />
+              </div>
+              <input
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                disabled={forgotLoading}
+                className="w-full pl-10 pr-4 py-3 rounded-xl glass-input"
+                placeholder="you@example.com"
+                required
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={forgotLoading}
+            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all duration-300 transform active:scale-[0.98] disabled:opacity-50 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+          >
+            {forgotLoading ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <>
+                Send Verification Link <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+        </form>
+
+        <div className="text-center mt-6">
+          <button
+            type="button"
+            onClick={() => setForgotStage(null)}
+            disabled={forgotLoading}
+            className="text-sm text-gray-400 hover:text-gray-200 font-semibold inline-flex items-center gap-1.5 focus:outline-none"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------
+  // RENDER: Forgot Password - Link Sent Stage
+  // ----------------------------------------------------
+  if (forgotStage === 'link-sent') {
+    return (
+      <div className="w-full max-w-md p-8 rounded-2xl glass-panel glow-cyan transition-all duration-300">
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-16 h-16 mb-3 rounded-2xl flex items-center justify-center bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5">
+            <div className="w-full h-full bg-darkBg rounded-[14px] flex items-center justify-center">
+              <Mail className="w-8 h-8 text-cyan-400" />
+            </div>
+          </div>
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">Link Sent</h2>
+          <p className="text-gray-400 text-sm mt-1 text-center">We've generated a secure verification link to reset your password.</p>
+        </div>
+
+        {simulatedLink && (
+          <div className="mb-6 p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-16 h-16 bg-cyan-500/5 rounded-full blur-xl pointer-events-none"></div>
+            <p className="text-cyan-300 text-xs font-bold uppercase tracking-wider mb-2">Simulation Sandbox</p>
+            <p className="text-gray-300 text-xs mb-3">Since you're in development mode, click the link below to simulate opening it from an email:</p>
+            <a
+              href={simulatedLink}
+              className="inline-flex items-center gap-2 py-2.5 px-4 bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 text-sm font-semibold rounded-xl border border-cyan-500/30 transition-all duration-200 w-full justify-center hover:shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+            >
+              Verify & Reset Password <ArrowRight className="w-4 h-4" />
+            </a>
+          </div>
+        )}
+
+        <div className="text-center mt-6">
+          <button
+            type="button"
+            onClick={() => setForgotStage(null)}
+            className="text-sm text-gray-400 hover:text-gray-200 font-semibold inline-flex items-center gap-1.5 focus:outline-none"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------
+  // RENDER: Forgot Password - Enter New Password Stage
+  // ----------------------------------------------------
+  if (forgotStage === 'reset') {
+    return (
+      <div className="w-full max-w-md p-8 rounded-2xl glass-panel glow-purple transition-all duration-300">
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-16 h-16 mb-3 rounded-2xl flex items-center justify-center bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5">
+            <div className="w-full h-full bg-darkBg rounded-[14px] flex items-center justify-center">
+              <KeyRound className="w-8 h-8 text-indigo-400" />
+            </div>
+          </div>
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">Secure Update</h2>
+          <p className="text-gray-400 text-sm mt-1 text-center">Choose a strong new password for your account</p>
+        </div>
+
+        {forgotError && (
+          <div className="mb-5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2 animate-pulse">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <span>{forgotError}</span>
+          </div>
+        )}
+
+        <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+          <span>Verification token successfully loaded.</span>
+        </div>
+
+        <form onSubmit={handleResetPassword} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">New Password</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={forgotLoading}
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl glass-input"
+                placeholder="New Password"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword(!showNewPassword)}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-200"
+              >
+                {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">Confirm New Password</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                disabled={forgotLoading}
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl glass-input"
+                placeholder="Confirm Password"
+                required
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={forgotLoading}
+            className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-accentPurple to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all duration-300 transform active:scale-[0.98] disabled:opacity-50 hover:shadow-[0_0_20px_rgba(139,92,246,0.4)]"
+          >
+            {forgotLoading ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <>
+                Update Password <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+        </form>
+
+        <div className="text-center mt-5">
+          <button
+            type="button"
+            onClick={() => {
+              setForgotStage(null);
+              if (clearResetToken) {
+                clearResetToken();
+              }
+            }}
+            disabled={forgotLoading}
+            className="text-xs text-gray-400 hover:text-gray-200 font-semibold focus:outline-none"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------
+  // RENDER: Standard Login Form
+  // ----------------------------------------------------
   return (
     <div className="w-full max-w-md p-8 rounded-2xl glass-panel glow-cyan transition-all duration-300">
       <div className="flex flex-col items-center mb-6">
@@ -92,7 +437,6 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
         <p className="text-gray-400 text-sm mt-1">Accelerate your preparation journey</p>
       </div>
 
-      {/* Login Error Message Box positioned at the top of the fields */}
       {submitError && (
         <div className="mb-5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2 animate-pulse">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -120,7 +464,19 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">Password</label>
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider">Password</label>
+            <button
+              type="button"
+              onClick={() => {
+                setForgotStage('email');
+                setForgotEmail(email);
+              }}
+              className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold focus:outline-none"
+            >
+              Forgot Password?
+            </button>
+          </div>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
               <Lock className="w-5 h-5" />
@@ -199,3 +555,4 @@ export default function Login({ onLoginSuccess, onNavigateToRegister, addToast }
     </div>
   );
 }
+

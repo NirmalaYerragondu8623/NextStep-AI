@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LogOut, BookOpen, Award, Video, CheckSquare, Plus, ExternalLink, Calendar, Compass, Code, Info, HelpCircle } from 'lucide-react';
+import { LogOut, BookOpen, Award, Video, CheckSquare, Plus, ExternalLink, Calendar, Compass, Code, Info, HelpCircle, Sparkles } from 'lucide-react';
 
 export default function Dashboard({ token, onLogout, addToast }) {
   const [data, setData] = useState(null);
@@ -15,6 +15,10 @@ export default function Dashboard({ token, onLogout, addToast }) {
   
   // Detail helpers
   const [projectHelp, setProjectHelp] = useState(null);
+  
+  // Custom Learning Plan state
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
+
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -105,7 +109,18 @@ export default function Dashboard({ token, onLogout, addToast }) {
     }));
   };
 
+  const handleAddWeekTasksToReporter = (weekPlan) => {
+    const newTasks = weekPlan.tasks.map((taskText, idx) => ({
+      id: `plan-${weekPlan.week}-${idx}-${Date.now()}`,
+      text: `${weekPlan.week}: ${taskText}`,
+      completed: false
+    }));
+    setTasks(prev => [...prev, ...newTasks]);
+    addToast(`Added ${weekPlan.week} tasks to your Daily Reporter!`, 'success');
+  };
+
   if (isLoading) {
+
     return (
       <div className="flex flex-col items-center justify-center min-h-screen">
         <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -158,6 +173,93 @@ export default function Dashboard({ token, onLogout, addToast }) {
         
         {/* Left Hand: Project Monitor & Webinars */}
         <div className="lg:col-span-2 space-y-8">
+
+          {/* Component: Your Custom Learning Path */}
+          {user.learning_plan && user.learning_plan.length > 0 && (
+            <section className="p-6 rounded-2xl glass-panel glow-cyan">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-100">Your Learning Path</h2>
+                    <p className="text-xs text-gray-400">Personalized weekly preparation modules and targets</p>
+                  </div>
+                </div>
+                <span className="text-xs px-2.5 py-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded-full font-semibold animate-pulse">
+                  {user.learning_plan.length} Weeks Plan
+                </span>
+              </div>
+
+              {/* Horizontal scrollable or wrapped tabs for Weeks */}
+              <div className="flex flex-wrap gap-2 mb-6 pb-4 border-b border-white/5 scrollbar-thin">
+                {user.learning_plan.map((weekPlan, idx) => (
+                  <button
+                    key={weekPlan.week}
+                    onClick={() => setSelectedWeekIndex(idx)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-300 ${
+                      selectedWeekIndex === idx
+                        ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.25)]'
+                        : 'bg-white/5 text-gray-400 hover:text-gray-200 border border-transparent'
+                    }`}
+                  >
+                    {weekPlan.week}
+                  </button>
+                ))}
+              </div>
+
+              {/* Selected Week Details Card */}
+              {user.learning_plan[selectedWeekIndex] && (
+                <div className="p-5 rounded-xl bg-white/5 border border-white/10 hover:border-cyan-500/20 transition-all duration-300">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-white/5">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                        Active Module • {user.learning_plan[selectedWeekIndex].week}
+                      </span>
+                      <h3 className="text-lg font-bold text-gray-200 mt-0.5">
+                        {user.learning_plan[selectedWeekIndex].title}
+                      </h3>
+                    </div>
+                    
+                    <button
+                      onClick={() => handleAddWeekTasksToReporter(user.learning_plan[selectedWeekIndex])}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98] text-white rounded-lg text-xs font-bold transition-all border border-cyan-500/20 hover:shadow-[0_0_12px_rgba(6,182,212,0.3)]"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Tasks to Reporter
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Focus Topics */}
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Focus Topics</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {user.learning_plan[selectedWeekIndex].topics.map((topic, tIdx) => (
+                          <span
+                            key={tIdx}
+                            className="text-xs px-2.5 py-1 bg-cyan-950/30 text-cyan-300 border border-cyan-900/40 rounded-lg font-medium"
+                          >
+                            {topic}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Milestone */}
+                    <div className="p-3.5 rounded-lg bg-cyan-950/20 border border-cyan-500/15">
+                      <h4 className="text-xs font-extrabold text-cyan-400 uppercase tracking-wide mb-1 flex items-center gap-1.5">
+                        <Award className="w-4 h-4" /> Weekly Milestone Target
+                      </h4>
+                      <p className="text-xs text-gray-200 leading-relaxed font-semibold">
+                        {user.learning_plan[selectedWeekIndex].milestone}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
           
           {/* Component 1: Project Monitor */}
           <section className="p-6 rounded-2xl glass-panel glow-cyan">

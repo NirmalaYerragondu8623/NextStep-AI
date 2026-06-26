@@ -2,23 +2,71 @@ import React, { useState, useEffect } from 'react';
 import Login from './components/Login';
 import Register from './components/Register';
 import Dashboard from './components/Dashboard';
+import PreparationForm from './components/PreparationForm';
 import Toast from './components/Toast';
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [screen, setScreen] = useState(token ? 'dashboard' : 'login');
+  const [screen, setScreen] = useState('login');
+  const [isCheckingPrep, setIsCheckingPrep] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [resetToken, setResetToken] = useState('');
+
+  // Check URL query parameters for reset token
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tokenParam = params.get('token');
+    if (tokenParam) {
+      setResetToken(tokenParam);
+      setScreen('login');
+      // Clean query parameter from URL so it doesn't linger
+      window.history.replaceState(null, null, window.location.pathname);
+    }
+  }, []);
+
+  // Fetch /api/users/me to check prep completion status
+  const checkUserPrepStatus = async (userToken) => {
+    if (!userToken) {
+      setScreen('login');
+      return;
+    }
+    setIsCheckingPrep(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/users/me', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${userToken}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.has_completed_prep) {
+          setScreen('dashboard');
+        } else {
+          setScreen('preparation');
+        }
+      } else {
+        // Token invalid or expired
+        localStorage.removeItem('token');
+        setToken('');
+        setScreen('login');
+      }
+    } catch (err) {
+      addToast('Connection failure checking profile status.', 'error');
+      setScreen('dashboard'); // Fallback to Dashboard
+    } finally {
+      setIsCheckingPrep(false);
+    }
+  };
 
   // Sync screen state with token presence
   useEffect(() => {
     if (token) {
       localStorage.setItem('token', token);
-      setScreen('dashboard');
+      checkUserPrepStatus(token);
     } else {
       localStorage.removeItem('token');
-      if (screen === 'dashboard') {
-        setScreen('login');
-      }
+      setScreen('login');
     }
   }, [token]);
 
@@ -91,26 +139,44 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-grow flex items-center justify-center p-4">
-        {screen === 'login' && (
-          <Login 
-            onLoginSuccess={handleLoginSuccess} 
-            onNavigateToRegister={() => setScreen('register')} 
-            addToast={addToast} 
-          />
-        )}
-        {screen === 'register' && (
-          <Register 
-            onRegisterSuccess={handleRegisterSuccess} 
-            onNavigateToLogin={() => setScreen('login')} 
-            addToast={addToast} 
-          />
-        )}
-        {screen === 'dashboard' && (
-          <Dashboard 
-            token={token} 
-            onLogout={handleLogout} 
-            addToast={addToast} 
-          />
+        {isCheckingPrep ? (
+          <div className="flex flex-col items-center justify-center min-h-[400px]">
+            <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-400 font-medium animate-pulse">Verifying preparation status...</p>
+          </div>
+        ) : (
+          <>
+            {screen === 'login' && (
+              <Login 
+                onLoginSuccess={handleLoginSuccess} 
+                onNavigateToRegister={() => setScreen('register')} 
+                addToast={addToast} 
+                initialResetToken={resetToken}
+                clearResetToken={() => setResetToken('')}
+              />
+            )}
+            {screen === 'register' && (
+              <Register 
+                onRegisterSuccess={handleRegisterSuccess} 
+                onNavigateToLogin={() => setScreen('login')} 
+                addToast={addToast} 
+              />
+            )}
+            {screen === 'preparation' && (
+              <PreparationForm
+                token={token}
+                onPrepSubmitSuccess={() => setScreen('dashboard')}
+                addToast={addToast}
+              />
+            )}
+            {screen === 'dashboard' && (
+              <Dashboard 
+                token={token} 
+                onLogout={handleLogout} 
+                addToast={addToast} 
+              />
+            )}
+          </>
         )}
       </main>
 
@@ -133,3 +199,4 @@ export default function App() {
     </div>
   );
 }
+
